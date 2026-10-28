@@ -1,0 +1,695 @@
+/*!
+ * MULA Fysio — online afspraak (booking panel)
+ * Custom booking UI on top of the Flux schedule API (/api_schedule/v1/{slug}).
+ *
+ * Usage:
+ *   <mula-afspraak slug="mula-fysio" api-token="YOUR_TOKEN"></mula-afspraak>
+ *   <script src="/mula-afspraak.js" defer></script>
+ *
+ * Attributes:
+ *   slug            Flux healthcare provider slug (required, default "mula-fysio")
+ *   api-token       Flux schedule API token (MULA token is built in; set only to override)
+ *   api-host        default "https://flux.healthcare"
+ *   contact-email   shown in the panel, default "info@mulafysio.nl"
+ *   contact-phone   shown in the panel, default "+31 6 29 55 46 89"
+ *   hide-button     hide the floating "Afspraak maken" button
+ *   photos          optional JSON {"roos":"/img/roos.jpg"} to override team photos (by first name)
+ *   demo            use built-in example data instead of the API (for testing)
+ *
+ * Opening the panel:
+ *   - the floating button, or
+ *   - any element with a data-afspraak attribute, or a link to the MULA Flux schedule, or
+ *   - document.querySelector('mula-afspraak').open()
+ */
+(function () {
+  "use strict";
+  if (customElements.get("mula-afspraak")) return;
+
+  /* ------------------------------------------------------------------ */
+  /* helpers                                                             */
+  /* ------------------------------------------------------------------ */
+  const esc = (v) =>
+    String(v == null ? "" : v).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  const parseDate = (s) => { const [y, m, d] = s.split("-").map(Number); return new Date(y, m - 1, d); };
+  const fmtDay = (s, lang) => new Intl.DateTimeFormat(lang === "en" ? "en-GB" : "nl-NL", { weekday: "long", day: "numeric", month: "short" }).format(parseDate(s));
+  const fmtShort = (d, lang) => new Intl.DateTimeFormat(lang === "en" ? "en-GB" : "nl-NL", { day: "numeric", month: "short" }).format(d);
+  const fmtWeekday = (d, lang) => new Intl.DateTimeFormat(lang === "en" ? "en-GB" : "nl-NL", { weekday: "short" }).format(d);
+  const mondayOf = (s) => { const d = parseDate(s); d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); return d; };
+  const iso = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  const initials = (n) => String(n || "").split(/\s+/).filter(Boolean).map((p) => p[0]).slice(0, 2).join("").toUpperCase();
+
+  /* Team photos (from mulafysio.nl), matched on first name. Override with the photos attribute. */
+  const TEAM_PHOTOS = {"roos": "data:image/jpeg;base64,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", "guylian": "data:image/jpeg;base64,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"};
+
+  /* Public, site level Flux token for MULA Fysio (read availability + book only). */
+  const DEFAULT_TOKEN = "45d2710dfd12d9f45ffea5c6e89fbc2636d71da449051af3706620126f5545f1";
+
+  /* MULA's own names and texts per Flux appointment type (matched on slug).
+     Only the types listed here are shown online. Order = display order. */
+  const TYPE_TEXT = {
+    "intake-behandeling": {
+      nl: { name: "Intake & behandeling", description: "Kennismaking, onderzoek en meteen een eerste behandeling. Je gaat naar huis met een helder plan en oefeningen die je direct kunt doen." },
+      en: { name: "Initial consultation & treatment", description: "Meet your physiotherapist, have your symptoms assessed, and start treatment straight away. You will leave with a clear plan and exercises you can start immediately." },
+    },
+    "screening-intake-onderzoek": {
+      nl: { name: "Intake & onderzoek", description: "Eerste afspraak zonder behandeling. We bespreken je klacht, doen een lichamelijk onderzoek en maken samen een plan." },
+      en: { name: "Initial consultation & assessment", description: "Your first appointment without treatment. We will discuss your symptoms, carry out a physical assessment, and make a plan together." },
+    },
+    "consult-fysiotherapie": {
+      nl: { name: "Vervolgafspraak", description: "Je traject loopt al. We gaan verder waar we gebleven waren: trainen, behandelen en je voortgang meten.\nBen je langer dan 3 maanden niet geweest? Boek dan een intake." },
+      en: { name: "Follow-up appointment", description: "Continue your treatment plan with training, treatment, and a progress check.\nIf it has been more than 3 months since your last visit, please book an initial consultation instead." },
+    },
+  };
+
+  const TEXT = {
+    nl: {
+      book: "Afspraak maken", online: "Online afspraak", back: "Terug", close: "Sluiten",
+      steps: ["Afspraak", "Moment", "Gegevens"], heading: "Waar kunnen we je mee helpen?",
+      systemDown: "Het afsprakensysteem is even niet bereikbaar.", wait: "Even geduld",
+      tryOrEmail: "Probeer het zo nog eens, of mail ons via", retry: "Opnieuw proberen",
+      openFlux: "Open de boekingspagina van Flux", questions: "Vragen?",
+      unsure: "Twijfel je wat je nodig hebt? Mail ons gerust, dan denken we met je mee. Wij werken met alle zorgverzekeraars en je hebt geen verwijzing nodig.",
+      when: "Wanneer past het jou?", where: "Waar?", chooseLocation: "Kies eerst een locatie.",
+      calendarError: "De agenda kon niet worden geladen. Probeer het opnieuw of mail ons via",
+      noPreference: "Geen voorkeur", who: "Bij wie?", noSlots: "Er zijn op dit moment geen vrije tijden online. Mail ons via",
+      findTime: "dan zoeken we samen een moment.", prevWeek: "Vorige week", nextWeek: "Volgende week",
+      until: "tot", free: "vrij", full: "vol", chooseDay: "Kies een dag om de vrije tijden te zien.",
+      next: "Verder naar je gegevens", almost: "Bijna klaar", at: "om", with: "Bij",
+      firstName: "Voornaam", prefix: "Tussenv.", surname: "Achternaam", birthDate: "Geboortedatum",
+      gender: "Geslacht", male: "Man", female: "Vrouw", other: "Anders", email: "E-mail",
+      phone: "Telefoon", postcode: "Postcode", houseNumber: "Huisnr.",
+      message: "Wil je ons nog iets laten weten?", messageExample: "Bijvoorbeeld: knieklachten sinds het hardlopen",
+      sending: "Even geduld…", submit: "Afspraak aanvragen", done: "Top, je aanvraag is binnen!",
+      doneLead: "Je krijgt zo een mail van ons over je afspraak. Tot snel in Noord!",
+      goodToKnow: "Handig om te weten",
+      tip1: "Trek sportieve kleding aan waarin je makkelijk beweegt. We gaan vaak meteen aan de slag.",
+      tip2: "Heb je een verwijzing of informatie van het ziekenhuis? Neem die mee.",
+      tip3: "Iets verzetten of een vraag? Mail ons via", finish: "Klaar",
+      requiredFirstName: "Vul je voornaam in", requiredSurname: "Vul je achternaam in",
+      requiredBirthDate: "Vul je geboortedatum in", requiredEmail: "Vul je e-mailadres in",
+      requiredPhone: "Vul je telefoonnummer in", invalidEmail: "Dit e-mailadres klopt niet",
+      invalidBirthDate: "Deze geboortedatum klopt niet", requiredGender: "Kies een optie",
+      taken: "Dit tijdstip is net door iemand anders geboekt. Kies een ander moment, je gegevens blijven bewaard.",
+      requestError: "Er ging iets mis met je aanvraag. Kies opnieuw een moment of mail ons via",
+      submitError: "Het versturen is niet gelukt. Probeer het opnieuw of mail ons via",
+      fieldError: "Controleer dit veld.",
+    },
+    en: {
+      book: "Book an appointment", online: "Online appointment", back: "Back", close: "Close",
+      steps: ["Appointment", "Time", "Details"], heading: "How can we help you?",
+      systemDown: "The booking system is temporarily unavailable.", wait: "Please wait",
+      tryOrEmail: "Please try again shortly, or email us at", retry: "Try again",
+      openFlux: "Open the Flux booking page", questions: "Questions?",
+      unsure: "Not sure which appointment to book? Email us and we will help you choose. We work with all health insurers, and you do not need a referral.",
+      when: "When suits you?", where: "Where?", chooseLocation: "Please choose a location first.",
+      calendarError: "The calendar could not be loaded. Please try again or email us at",
+      noPreference: "No preference", who: "With whom?", noSlots: "There are currently no available times online. Email us at",
+      findTime: "and we will find a time together.", prevWeek: "Previous week", nextWeek: "Next week",
+      until: "to", free: "available", full: "full", chooseDay: "Choose a day to see available times.",
+      next: "Continue to your details", almost: "Almost done", at: "at", with: "With",
+      firstName: "First name", prefix: "Name prefix", surname: "Last name", birthDate: "Date of birth",
+      gender: "Gender", male: "Male", female: "Female", other: "Other", email: "Email",
+      phone: "Phone number", postcode: "Postal code", houseNumber: "House number",
+      message: "Anything else you would like us to know?", messageExample: "For example: knee pain after running",
+      sending: "Please wait…", submit: "Request appointment", done: "Your request has been received!",
+      doneLead: "You will receive an email about your appointment shortly. See you in Amsterdam Noord!",
+      goodToKnow: "Good to know",
+      tip1: "Wear comfortable sports clothes that let you move freely. We often get started straight away.",
+      tip2: "Have a referral or information from the hospital? Please bring it with you.",
+      tip3: "Need to change your appointment or have a question? Email us at", finish: "Done",
+      requiredFirstName: "Enter your first name", requiredSurname: "Enter your last name",
+      requiredBirthDate: "Enter your date of birth", requiredEmail: "Enter your email address",
+      requiredPhone: "Enter your phone number", invalidEmail: "Enter a valid email address",
+      invalidBirthDate: "Enter a valid date of birth", requiredGender: "Choose an option",
+      taken: "This time was just booked by someone else. Choose another time; your details have been saved.",
+      requestError: "There was a problem with your request. Choose another time or email us at",
+      submitError: "Your request could not be sent. Please try again or email us at",
+      fieldError: "Please check this field.",
+    },
+  };
+
+  /* ------------------------------------------------------------------ */
+  /* data sources                                                        */
+  /* ------------------------------------------------------------------ */
+  class FluxApi {
+    constructor(host, slug, token) {
+      this.base = `${host.replace(/\/$/, "")}/api_schedule/v1/${encodeURIComponent(slug)}`;
+      this.token = token;
+    }
+    async req(path, opts = {}) {
+      const res = await fetch(this.base + path, {
+        method: opts.method || "GET",
+        headers: Object.assign({ Accept: "application/json", Authorization: `Bearer ${this.token || ""}` },
+          opts.body ? { "Content-Type": "application/json" } : {}),
+        body: opts.body ? JSON.stringify(opts.body) : undefined,
+      });
+      let data = null;
+      try { data = await res.json(); } catch (_) { /* empty body */ }
+      if (!res.ok) { const e = new Error((data && data.message) || `HTTP ${res.status}`); e.status = res.status; e.data = data; throw e; }
+      return data;
+    }
+    q(params) {
+      const u = new URLSearchParams();
+      Object.entries(params).forEach(([k, v]) => { if (v) u.set(k, v); });
+      const s = u.toString();
+      return s ? `?${s}` : "";
+    }
+    config() { return this.req("/config"); }
+    types() { return this.req("/appointment-types").then((r) => r.data); }
+    locations(p) { return this.req("/locations" + this.q(p)).then((r) => r.data); }
+    users(p) { return this.req("/users" + this.q(p)).then((r) => r.data.map((u) => Object.assign({}, u, { name: String(u.name).replace(/\s+/g, " ").trim() }))); }
+    availability(p) { return this.req("/availability" + this.q(p)); }
+    countries() { return this.req("/countries").then((r) => r.data); }
+    book(body) { return this.req("/appointments", { method: "POST", body }); }
+  }
+
+  /* Example data with the exact same shape as the Flux API. */
+  class DemoApi {
+    wait(v) { return new Promise((r) => setTimeout(() => r(v), 250)); }
+    config() { return this.wait({ healthcare_provider: { slug: "mula-fysio", name: "MULA Fysio" }, settings: { user_label_step_enabled: false, call_out_text: null, redirect_url: null, auto_accept_proposals: true } }); }
+    types() {
+      return this.wait([
+        { slug: "intake-behandeling", name: "Intake & behandeling", duration_minutes: 60, description: "Kennismaking, onderzoek en meteen een eerste behandeling. Je gaat naar huis met een helder plan en oefeningen die je direct kunt doen." },
+        { slug: "intake-onderzoek", name: "Intake & onderzoek", duration_minutes: 30, description: "Eerste afspraak zonder behandeling. We bespreken je klacht, doen een lichamelijk onderzoek en maken samen een plan." },
+        { slug: "vervolgafspraak", name: "Vervolgafspraak", duration_minutes: 30, description: "Je traject loopt al. We gaan verder waar we gebleven waren: trainen, behandelen en je voortgang meten.\nBen je langer dan 3 maanden niet geweest? Boek dan een intake." },
+      ]);
+    }
+    locations() { return this.wait([{ uuid: "loc-noord", name: "MULA Fysio", address: "Amsterdam Noord" }]); }
+    users() {
+      return this.wait([
+        { uuid: "u-roos", name: "Roos van der Deen", function_title: "Fysiotherapeut", avatar_url: null },
+        { uuid: "u-guylian", name: "Guylian Kick", function_title: "Fysiotherapeut & Manueel Therapeut", avatar_url: null },
+      ]);
+    }
+    availability(p) {
+      const today = new Date(); today.setHours(0, 0, 0, 0);
+      const start = new Date(today); start.setDate(start.getDate() - ((start.getDay() + 6) % 7));
+      const first = new Date(today); first.setDate(first.getDate() + 1);
+      const end = new Date(today); end.setDate(end.getDate() + 28);
+      const sets = p.user === "u-roos"
+        ? [["07:45", "09:15", "12:30", "16:45"], ["08:30", "10:00", "17:30"], ["07:45", "13:15", "18:00"], [], ["09:00", "11:30", "16:00", "17:15"]]
+        : [["08:00", "10:45", "14:00"], ["07:30", "12:00", "16:30", "18:15"], [], ["08:15", "09:45", "15:30"], ["10:30", "13:00"]];
+      const dates = [];
+      for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+        const wd = d.getDay();
+        const ok = d >= first && wd > 0 && wd < 6;
+        dates.push({ date: iso(d), slots: ok ? sets[(d.getDate() * 7 + d.getMonth() * 3) % 5] : [] });
+      }
+      return this.wait({ period: { start: iso(first), end: iso(end) }, dates });
+    }
+    countries() { return this.wait([{ id: 22, name: "België" }, { id: 159, name: "Nederland" }]); }
+    book(b) {
+      const start = `${b.date}T${b.timeslot}:00+02:00`;
+      return this.wait({ appointment: { start, end: start, appointment_type: b.appointment_type, practitioner: b.user, location: null }, redirect_url: null });
+    }
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* styles                                                              */
+  /* ------------------------------------------------------------------ */
+  const CSS = `
+:host{--ink:#2F342D;--ink2:#4B5148;--muted:#70776E;--paper:#F6F8F3;--sage:#BABFA9;--soft:#DDE2D4;--hover:#CDD3C2;--rule:rgba(47,52,45,.16);--err:#9B3B2E;
+  --font:"Plus Jakarta Sans",system-ui,-apple-system,"Segoe UI",sans-serif}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+button{font:inherit;color:inherit}
+.fab{position:fixed;right:24px;bottom:24px;z-index:2147483000;display:flex;gap:10px;align-items:center;background:var(--soft);color:var(--ink);border:0;padding:15px 22px;font-family:var(--font);font-size:12px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;cursor:pointer;box-shadow:0 10px 30px rgba(0,0,0,.22)}
+.fab:hover{background:var(--hover)}
+.overlay{position:fixed;inset:0;z-index:2147483001;background:rgba(20,23,19,.45);display:flex;justify-content:flex-end;font-family:var(--font);color:var(--ink);font-size:15px;line-height:1.55;animation:fade .2s ease}
+.drawer{width:min(500px,100%);height:100%;background:var(--paper);display:flex;flex-direction:column;box-shadow:-20px 0 60px rgba(0,0,0,.25);animation:slide .25s ease}
+@keyframes fade{from{opacity:0}}@keyframes slide{from{transform:translateX(30px);opacity:.6}}
+.top{padding:20px 28px 0;display:grid;gap:14px;border-bottom:1px solid var(--rule);padding-top:max(20px,env(safe-area-inset-top))}
+.bar{display:flex;align-items:center;gap:12px;min-height:28px}
+.eyebrow{font-size:11.5px;font-weight:600;letter-spacing:.2em;text-transform:uppercase;color:var(--ink2);display:flex;gap:10px;align-items:center}
+.eyebrow::before{content:"";width:5px;height:5px;border-radius:50%;background:var(--ink)}
+.ib{border:0;background:none;padding:6px;cursor:pointer;display:grid;place-items:center;color:var(--ink)}
+.ib[disabled]{opacity:.3;cursor:default}
+.sp{flex:1}
+.tabs{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.tab{border-top:1.5px solid var(--rule);padding:8px 0 12px;font-size:10.5px;letter-spacing:.16em;text-transform:uppercase;color:#9aa096;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tab.on{border-top-color:var(--ink);color:var(--ink)}
+.tab.done{border-top-color:var(--ink2);color:var(--ink2)}
+.body{flex:1;overflow:auto;padding:28px 28px 32px;padding-bottom:max(32px,env(safe-area-inset-bottom));display:flex;flex-direction:column;gap:22px;-webkit-overflow-scrolling:touch}
+.rule{height:1px;background:var(--rule);flex:none}
+h2{font-size:clamp(28px,6vw,38px);line-height:1.08;font-weight:500;letter-spacing:-.025em;margin:0;text-wrap:balance}
+.lead{margin:-8px 0 0;color:var(--ink2);font-size:14.5px}
+.callout{background:var(--soft);padding:14px 16px;font-size:14px}
+.callout p{margin:0}
+.rows{display:grid;gap:12px}
+.row{border:0;padding:22px 24px;background:var(--soft);cursor:pointer;text-align:left;display:flex;align-items:center;justify-content:space-between;gap:14px;transition:background .15s}
+.row:hover{background:var(--hover)}
+.txt{display:grid;gap:6px}
+.meta{font-size:10.5px;letter-spacing:.18em;text-transform:uppercase;color:var(--ink2);font-weight:600}
+.nm{font-size:14px;font-weight:700;letter-spacing:.16em;text-transform:uppercase}
+.d{font-size:13.5px;line-height:1.5;color:var(--ink2);white-space:pre-line}
+.arrow{font-size:20px;transition:transform .15s;flex:none}
+.row:hover .arrow{transform:translateX(4px)}
+.label{font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:var(--ink2);font-weight:600}
+.chips{display:flex;flex-wrap:wrap;gap:8px}
+.chip{border:1.5px solid var(--rule);background:transparent;padding:10px 14px;cursor:pointer;font-size:14px;font-weight:600}
+.chip.sel{border-color:var(--ink);background:var(--soft)}
+.whos{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:8px}
+.who{border:1.5px solid var(--rule);background:transparent;padding:12px 8px;display:grid;justify-items:center;gap:8px;cursor:pointer;font-size:13px;font-weight:600;text-align:center}
+.av{width:44px;height:44px;border-radius:50%;object-fit:cover;background:var(--soft);display:grid;place-items:center;font-size:14px;font-weight:700;color:var(--ink)}
+.who.sel{border-color:var(--ink);background:var(--soft)}
+.week{display:flex;align-items:center;justify-content:space-between}
+.week strong{font-size:14px;font-weight:600}
+.days{display:grid;gap:6px}
+.day{border:1.5px solid var(--rule);background:transparent;padding:10px 0;cursor:pointer;display:grid;gap:2px;justify-items:center;font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink2)}
+.day b{font-size:19px;letter-spacing:0;color:var(--ink);font-weight:600;font-variant-numeric:tabular-nums}
+.day small{font-size:10px;letter-spacing:.04em;text-transform:none;color:var(--muted)}
+.day.sel{background:var(--ink);border-color:var(--ink);color:var(--soft)}
+.day.sel b,.day.sel small{color:var(--paper)}
+.day[disabled]{opacity:.35;cursor:default}
+.slots{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
+.slot{border:1.5px solid var(--rule);background:transparent;padding:10px 0;cursor:pointer;font-weight:600;font-size:14px;font-variant-numeric:tabular-nums}
+.slot:hover{border-color:var(--ink)}
+.slot.sel{background:var(--ink);color:var(--paper);border-color:var(--ink)}
+.slot small{display:block;font-size:10px;font-weight:500;color:var(--muted)}
+.slot.sel small{color:var(--sage)}
+.summary{background:var(--soft);padding:16px 18px;display:grid;gap:4px;font-size:14px}
+.summary .t{font-weight:700;letter-spacing:.12em;text-transform:uppercase;font-size:13px}
+.form{display:grid;grid-template-columns:repeat(6,1fr);gap:14px 10px}
+.f{display:grid;gap:6px;grid-column:span 6}
+.f.s2{grid-column:span 2}.f.s3{grid-column:span 3}.f.s4{grid-column:span 4}
+.f label,.f .lb{font-size:10.5px;letter-spacing:.16em;text-transform:uppercase;font-weight:600;color:var(--ink2)}
+.f input,.f textarea{font:inherit;font-size:16px;color:var(--ink);background:#fff;border:1.5px solid var(--rule);border-radius:0;padding:11px 12px;width:100%;-webkit-appearance:none;appearance:none}
+.f input:focus,.f textarea:focus{outline:none;border-color:var(--ink)}
+.f.bad input,.f.bad .seg button{border-color:var(--err)}
+.f .e{font-size:12.5px;color:var(--err)}
+.seg{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
+.seg button{border:1.5px solid var(--rule);background:#fff;padding:10px 0;cursor:pointer;font-size:14px}
+.seg button.sel{background:var(--ink);color:var(--paper);border-color:var(--ink)}
+.hint{font-size:13px;color:var(--muted);margin:0}
+.alert{background:#F3E4DF;color:var(--err);padding:12px 14px;font-size:14px}
+.cta{border:0;background:var(--ink);color:var(--paper);padding:17px 20px;font-size:12.5px;font-weight:700;letter-spacing:.18em;text-transform:uppercase;cursor:pointer;display:flex;justify-content:space-between;align-items:center;flex:none}
+.cta[disabled]{opacity:.35;cursor:default}
+.foot{display:grid;gap:14px;font-size:14.5px;color:var(--ink2)}
+.foot p{margin:0}
+.contact{display:flex;gap:16px;flex-wrap:wrap;justify-content:center;font-size:14px;padding-top:14px;border-top:1px solid var(--rule)}
+.contact a{color:var(--ink);font-weight:600;text-decoration:none;border-bottom:1px solid var(--ink)}
+.list{margin:0;padding:0;list-style:none;display:grid;gap:10px}
+.list li{display:grid;grid-template-columns:28px 1fr;gap:10px;font-size:14.5px;color:var(--ink2)}
+.list li span{font-size:11px;font-weight:700;letter-spacing:.1em;color:var(--ink);padding-top:3px}
+.loading{display:grid;gap:12px}
+.sk{height:84px;background:linear-gradient(90deg,var(--soft),#e8ece2,var(--soft));background-size:200% 100%;animation:sh 1.2s linear infinite}
+@keyframes sh{to{background-position:-200% 0}}
+button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
+@media (max-width:520px){
+  .drawer{width:100%}
+  .top,.body{padding-left:18px;padding-right:18px}
+  .row{padding:18px}
+  .nm{font-size:13px;letter-spacing:.12em}
+  .slots{grid-template-columns:repeat(3,1fr)}
+  .fab{right:16px;bottom:16px}
+}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+`;
+
+  const ICON_CAL = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="1"/><path d="M3 10h18M8 3v4M16 3v4"/></svg>';
+  const ICON_BACK = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M19 12H5M11 6l-6 6 6 6"/></svg>';
+  const ICON_X = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>';
+  /* ------------------------------------------------------------------ */
+  /* component                                                           */
+  /* ------------------------------------------------------------------ */
+  class MulaAfspraak extends HTMLElement {
+    static get observedAttributes() { return ["lang"]; }
+    get language() { return this.getAttribute("lang") === "en" ? "en" : "nl"; }
+    get t() { return TEXT[this.language]; }
+    attributeChangedCallback(name, oldValue, newValue) {
+      if (name !== "lang" || oldValue === newValue || !this._init) return;
+      if (this.types) {
+        this.types = this.types.map((type) => ({ ...type, ...TYPE_TEXT[type.slug][this.language] }));
+        if (this.s.type) this.s.type = this.types.find((type) => type.slug === this.s.type.slug);
+      }
+      this.root.querySelector(".drawer").setAttribute("lang", this.language);
+      this.render();
+    }
+    connectedCallback() {
+      if (this._init) return;
+      this._init = true;
+      const a = (n, d) => this.getAttribute(n) || d;
+      this.email = a("contact-email", "info@mulafysio.nl");
+      this.phone = a("contact-phone", "+31 6 29 55 46 89");
+      this.photos = Object.assign({}, TEAM_PHOTOS);
+      try { Object.assign(this.photos, JSON.parse(this.getAttribute("photos") || "{}")); } catch (_) { /* ignore bad JSON */ }
+      this.api = this.hasAttribute("demo") ? new DemoApi()
+        : new FluxApi(a("api-host", "https://flux.healthcare"), a("slug", "mula-fysio"), a("api-token", DEFAULT_TOKEN));
+      this.root = this.attachShadow({ mode: "open" });
+      this.root.innerHTML = `<style>${CSS}</style>
+        <button class="fab" part="button" ${this.hasAttribute("hide-button") ? "hidden" : ""}>${ICON_CAL}<span class="fab-label"></span></button>
+        <div class="overlay" hidden>
+          <aside class="drawer" role="dialog" aria-modal="true">
+            <div class="top">
+              <div class="bar">
+                <button class="ib back" hidden>${ICON_BACK}</button>
+                <div class="eyebrow"></div><div class="sp"></div>
+                <button class="ib close">${ICON_X}</button>
+              </div>
+              <div class="tabs"></div>
+            </div>
+            <div class="body"></div>
+          </aside>
+        </div>`;
+      this.$ = (s) => this.root.querySelector(s);
+      this.$(".fab").addEventListener("click", () => this.open());
+      this.$(".close").addEventListener("click", () => this.close());
+      this.$(".back").addEventListener("click", () => this.back());
+      this.$(".overlay").addEventListener("click", (e) => { if (e.target === this.$(".overlay")) this.close(); });
+      this.$(".body").addEventListener("click", (e) => this.onClick(e));
+      this.$(".body").addEventListener("input", (e) => this.onInput(e));
+      this._onKey = (e) => { if (e.key === "Escape" && this.isOpen) this.close(); };
+      document.addEventListener("keydown", this._onKey);
+      // Only the MULA booking link opens the panel; an edited admin URL remains a normal link.
+      this._onDocClick = (e) => {
+        if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+        const t = e.target.closest && e.target.closest('[data-afspraak],a[href="https://flux.healthcare/schedule/mula-fysio"]');
+        if (t) { e.preventDefault(); this.open(); }
+      };
+      document.addEventListener("click", this._onDocClick);
+      this.reset();
+      this._onHash = () => { if (location.hash === "#afspraak") this.open(); };
+      window.addEventListener("hashchange", this._onHash);
+      this._onHash();
+      this.root.querySelector(".drawer").setAttribute("lang", this.language);
+      this.render();
+    }
+    disconnectedCallback() {
+      document.removeEventListener("keydown", this._onKey);
+      document.removeEventListener("click", this._onDocClick);
+      window.removeEventListener("hashchange", this._onHash);
+    }
+
+    reset() {
+      this.s = { step: 0, type: null, location: null, who: null, week: 0, day: null, slot: null, form: { country_id: this.countryId || 159 }, gender: null, errors: {}, alert: null, busy: false, result: null };
+      this.avail = null;
+    }
+
+    get isOpen() { return !this.$(".overlay").hidden; }
+    open() {
+      if (this.isOpen) return;
+      this._lastFocus = document.activeElement;
+      this._prevOverflow = document.documentElement.style.overflow;
+      document.documentElement.style.overflow = "hidden";
+      this.$(".overlay").hidden = false;
+      this.$(".fab").hidden = true;
+      if (!this.boot) this.boot = this.load();
+      this.render();
+      setTimeout(() => this.$(".close").focus(), 30);
+      this.dispatchEvent(new CustomEvent("mula:open", { bubbles: true, composed: true }));
+    }
+    close() {
+      this.$(".overlay").hidden = true;
+      this.$(".fab").hidden = this.hasAttribute("hide-button");
+      document.documentElement.style.overflow = this._prevOverflow || "";
+      if (this.s.result) this.reset();
+      if (this._lastFocus && this._lastFocus.focus) this._lastFocus.focus();
+      this.dispatchEvent(new CustomEvent("mula:close", { bubbles: true, composed: true }));
+    }
+    back() {
+      if (this.s.step > 0 && !this.s.result) { this.s.step--; this.s.alert = null; this.render(); }
+    }
+
+    async load() {
+      this.loadError = null;
+      try {
+        let [config, types, locations, countries] = await Promise.all([
+          this.api.config(), this.api.types(), this.api.locations({}), this.api.countries(),
+        ]);
+        const order = Object.keys(TYPE_TEXT);
+        const rank = (t) => { const i = order.indexOf(t.slug); return i < 0 ? 999 : i; };
+        types = types.filter((t) => TYPE_TEXT[t.slug]).map((t) => Object.assign({}, t, TYPE_TEXT[t.slug][this.language])).sort((a, b) => rank(a) - rank(b));
+        this.config = config; this.types = types; this.locations = locations; this.countries = countries;
+        const nl = countries.find((c) => c.id === 159) || countries.find((c) => /^(nederland|the netherlands|netherlands)$/i.test(String(c.name).trim()));
+        this.countryId = nl ? nl.id : 159;
+        this.s.form.country_id = this.countryId;
+      } catch (e) {
+        this.loadError = e; this.boot = null;
+      }
+      this.render();
+    }
+
+    async loadAvailability() {
+      const s = this.s;
+      this.avail = null; this.availError = null; this.render();
+      try {
+        const loc = s.location || undefined;
+        const users = await this.api.users({ appointment_type: s.type.slug, location: loc });
+        this.users = users;
+        if (s.who && !users.find((u) => u.uuid === s.who)) s.who = null;
+        const targets = s.who ? users.filter((u) => u.uuid === s.who) : users;
+        const results = await Promise.all(targets.map((u) =>
+          this.api.availability({ appointment_type: s.type.slug, user: u.uuid, location: loc }).then((r) => ({ u, r }))));
+        // merge into { date: [{t, user}] }
+        const map = {};
+        results.forEach(({ u, r }) => r.dates.forEach((d) => {
+          map[d.date] = map[d.date] || [];
+          d.slots.forEach((t) => map[d.date].push({ t, user: u }));
+        }));
+        Object.values(map).forEach((arr) => arr.sort((a, b) => a.t.localeCompare(b.t) || a.user.name.localeCompare(b.user.name)));
+        const dates = Object.keys(map).sort();
+        const weeks = [];
+        dates.forEach((ds) => { const m = iso(mondayOf(ds)); if (!weeks.includes(m)) weeks.push(m); });
+        const weekend = dates.some((ds) => { const g = parseDate(ds).getDay(); return (g === 0 || g === 6) && map[ds].length; });
+        // start at the first week that has any free slot
+        let first = weeks.findIndex((w) => dates.some((ds) => iso(mondayOf(ds)) === w && map[ds].length));
+        this.avail = { map, weeks, weekend };
+        s.week = Math.max(0, first);
+        if (first < 0) this.dispatchEvent(new CustomEvent("mula:no_availability", { bubbles: true, composed: true }));
+      } catch (e) {
+        this.availError = e;
+      }
+      this.render();
+    }
+
+    /* ---------------- rendering ---------------- */
+    render() {
+      const s = this.s, t = this.t;
+      this.$(".fab-label").textContent = t.book;
+      this.$(".drawer").setAttribute("aria-label", t.online);
+      this.$(".back").setAttribute("aria-label", t.back);
+      this.$(".close").setAttribute("aria-label", t.close);
+      this.$(".eyebrow").textContent = t.online;
+      this.$(".tabs").innerHTML = t.steps.map((n, i) => {
+        const cls = s.result ? "done" : i === s.step ? "on" : i < s.step ? "done" : "";
+        return `<div class="tab ${cls}">${String(i + 1).padStart(2, "0")}${i === s.step && !s.result ? " " + n : ""}</div>`;
+      }).join("");
+      this.$(".back").hidden = s.step === 0 || !!s.result;
+      const body = this.$(".body");
+      const y = body.scrollTop;
+      let h;
+      if (!this.types && !this.loadError) h = this.vLoading();
+      else if (this.loadError) h = this.vError(t.systemDown);
+      else if (s.result) h = this.vDone();
+      else if (s.step === 0) h = this.vTypes();
+      else if (s.step === 1) h = this.vMoment();
+      else h = this.vForm();
+      body.innerHTML = h;
+      body.scrollTop = this._keepScroll ? y : 0;
+      this._keepScroll = false;
+    }
+    vLoading() { return `<div class="rule"></div><h2>${this.t.heading}</h2><div class="loading"><div class="sk"></div><div class="sk"></div><div class="sk"></div></div>`; }
+    vError(msg) {
+      const t = this.t;
+      return `<div class="rule"></div><h2>${t.wait}</h2><div class="alert">${esc(msg)} ${t.tryOrEmail} ${esc(this.email)}.</div>
+        <button class="cta" data-a="retry">${t.retry} <span aria-hidden="true">→</span></button>
+        <p><a href="https://flux.healthcare/schedule/mula-fysio" target="_blank" rel="noopener noreferrer">${t.openFlux}</a></p>`;
+    }
+    vContact() {
+      return `<div class="contact"><span>${this.t.questions} <a href="mailto:${esc(this.email)}">${esc(this.email)}</a></span><a href="tel:${esc(this.phone.replace(/\s+/g, ""))}">${esc(this.phone)}</a></div>`;
+    }
+    vTypes() {
+      const t = this.t;
+      const co = this.config && this.config.settings && this.config.settings.call_out_text;
+      return `<div class="rule"></div><h2>${t.heading}</h2>
+        ${co && this.language === "nl" ? `<div class="callout">${esc(co)}</div>` : ""}
+        <div class="rows">${this.types.map((t, i) => `<button class="row" data-a="type" data-i="${i}">
+          <span class="txt"><span class="meta">${esc(t.duration_minutes)} min</span><span class="nm">${esc(t.name)}</span>${t.description ? `<span class="d">${esc(t.description)}</span>` : ""}</span>
+          <span class="arrow" aria-hidden="true">→</span></button>`).join("")}</div>
+        <div class="foot"><div class="rule"></div>
+          <p>${t.unsure}</p>
+          ${this.vContact()}</div>`;
+    }
+    vMoment() {
+      const s = this.s, t = this.t;
+      let h = `<div class="rule"></div><h2>${t.when}</h2>`;
+      if (this.locations && this.locations.length > 1) {
+        h += `<div class="label">${t.where}</div><div class="chips">${this.locations.map((l) => `<button class="chip ${s.location === l.uuid ? "sel" : ""}" data-a="loc" data-id="${esc(l.uuid)}">${esc(l.name)}</button>`).join("")}</div>`;
+        if (!s.location) return h + `<p class="hint">${t.chooseLocation}</p>`;
+      }
+      if (this.availError) return h + `<div class="alert">${t.calendarError} ${esc(this.email)}.</div><button class="cta" data-a="reavail">${t.retry} <span aria-hidden="true">→</span></button><p><a href="https://flux.healthcare/schedule/mula-fysio" target="_blank" rel="noopener noreferrer">${t.openFlux}</a></p>`;
+      if (this.users && this.users.length) {
+        const opts = this.users.length > 1 ? [{ uuid: "", name: t.noPreference }, ...this.users] : this.users;
+        h += `<div class="label">${t.who}</div><div class="whos" style="${opts.length === 1 ? "grid-template-columns:minmax(110px,160px)" : ""}">${opts.map((u) => {
+          const sel = this.users.length === 1 || (s.who || "") === u.uuid;
+          const pic = u.uuid && (this.photos[String(u.name).split(" ")[0].toLowerCase()] || u.avatar_url);
+          const av = !u.uuid ? `<span class="av" aria-hidden="true">✦</span>`
+            : pic ? `<img class="av" src="${esc(pic)}" alt="">` : `<span class="av" aria-hidden="true">${esc(initials(u.name))}</span>`;
+          return `<button class="who ${sel ? "sel" : ""}" data-a="who" data-id="${esc(u.uuid)}">${av}${esc(u.uuid ? u.name.split(" ")[0] : u.name)}</button>`;
+        }).join("")}</div>`;
+      }
+      if (s.alert) h += `<div class="alert">${esc(s.alert)}</div>`;
+      if (!this.avail) return h + `<div class="loading"><div class="sk" style="height:64px"></div><div class="sk" style="height:120px"></div></div>`;
+      const { map, weeks, weekend } = this.avail;
+      if (!weeks.length || !Object.values(map).some((a) => a.length)) {
+        return h + `<div class="alert">${t.noSlots} ${esc(this.email)}, ${t.findTime}</div><p><a href="https://flux.healthcare/schedule/mula-fysio" target="_blank" rel="noopener noreferrer">${t.openFlux}</a></p>`;
+      }
+      const mon = parseDate(weeks[s.week]);
+      const n = weekend ? 7 : 5;
+      const days = [...Array(n)].map((_, i) => { const d = new Date(mon); d.setDate(mon.getDate() + i); return iso(d); });
+      const last = parseDate(days[n - 1]);
+      h += `<div class="week">
+          <button class="ib" data-a="wk" data-d="-1" ${s.week === 0 ? "disabled" : ""} aria-label="${t.prevWeek}">←</button>
+          <strong>${fmtShort(mon, this.language)} ${t.until} ${fmtShort(last, this.language)}</strong>
+          <button class="ib" data-a="wk" data-d="1" ${s.week >= weeks.length - 1 ? "disabled" : ""} aria-label="${t.nextWeek}">→</button>
+        </div>
+        <div class="days" style="grid-template-columns:repeat(${n},1fr)">${days.map((ds) => {
+          const c = (map[ds] || []).length; const d = parseDate(ds);
+          return `<button class="day ${s.day === ds ? "sel" : ""}" data-a="day" data-id="${ds}" ${c ? "" : "disabled"}>${fmtWeekday(d, this.language)}<b>${d.getDate()}</b><small>${c ? c + " " + t.free : t.full}</small></button>`;
+        }).join("")}</div>`;
+      if (s.day && map[s.day]) {
+        h += `<div class="label">${fmtDay(s.day, this.language)}</div><div class="slots">${map[s.day].map((x, i) => {
+          const sel = s.slot && s.slot.t === x.t && s.slot.user.uuid === x.user.uuid;
+          return `<button class="slot ${sel ? "sel" : ""}" data-a="slot" data-i="${i}">${esc(x.t)}${s.who || this.users.length === 1 ? "" : `<small>${esc(x.user.name.split(" ")[0])}</small>`}</button>`;
+        }).join("")}</div>`;
+      } else {
+        h += `<p class="hint">${t.chooseDay}</p>`;
+      }
+      return h + `<button class="cta" data-a="next" ${s.slot ? "" : "disabled"}>${t.next} <span aria-hidden="true">→</span></button>`;
+    }
+    vForm() {
+      const s = this.s, f = s.form, e = s.errors, t = this.t;
+      const fld = (key, label, cls, attrs) => `<div class="f ${cls || ""} ${e[key] ? "bad" : ""}"><label for="${key}">${label}</label>
+        <input id="${key}" data-f="${key}" value="${esc(f[key] || "")}" ${attrs || ""}>${e[key] ? `<span class="e">${esc(e[key])}</span>` : ""}</div>`;
+      const loc = this.locations && this.locations.find((l) => l.uuid === s.location);
+      return `<div class="rule"></div><h2>${t.almost}</h2>
+        <div class="summary"><div class="t">${esc(s.type.name)}</div><div>${fmtDay(s.day, this.language)} ${t.at} ${esc(s.slot.t)} · ${esc(s.type.duration_minutes)} min</div><div>${t.with} ${esc(s.slot.user.name)}${loc && this.locations.length > 1 ? ", " + esc(loc.name) : ""}</div></div>
+        ${s.alert ? `<div class="alert">${esc(s.alert)}</div>` : ""}
+        <form class="form" novalidate>
+          ${fld("first_names", t.firstName, "", 'autocomplete="given-name" maxlength="100"')}
+          ${fld("surname_prefix", t.prefix, "s2", 'maxlength="50"')}
+          ${fld("surname", t.surname, "s4", 'autocomplete="family-name" maxlength="100"')}
+          ${fld("date_of_birth", t.birthDate, "", 'type="date" autocomplete="bday"')}
+          <div class="f ${e.gender ? "bad" : ""}"><span class="lb">${t.gender}</span><div class="seg">${[["M", t.male], ["F", t.female], ["UN", t.other]].map(([v, l]) =>
+            `<button type="button" class="${s.gender === v ? "sel" : ""}" data-a="g" data-v="${v}">${l}</button>`).join("")}</div>${e.gender ? `<span class="e">${esc(e.gender)}</span>` : ""}</div>
+          ${fld("email_address", t.email, "", 'type="email" autocomplete="email" maxlength="200"')}
+          ${fld("phone_number", t.phone, "", 'type="tel" autocomplete="tel" maxlength="30"')}
+          ${fld("postal_code", t.postcode, "s4", 'autocomplete="postal-code"')}
+          ${fld("house_number", t.houseNumber, "s2", 'maxlength="20"')}
+          <div class="f ${e.description ? "bad" : ""}"><label for="description">${t.message}</label>
+            <textarea id="description" data-f="description" rows="3" maxlength="200" placeholder="${t.messageExample}">${esc(f.description || "")}</textarea></div>
+        </form>
+        <button class="cta" data-a="submit" ${s.busy ? "disabled" : ""}>${s.busy ? t.sending : t.submit} <span aria-hidden="true">→</span></button>`;
+    }
+    vDone() {
+      const s = this.s, t = this.t;
+      const when = `${fmtDay(s.day, this.language)} ${t.at} ${s.slot.t}`;
+      return `<div class="rule"></div><h2>${t.done}</h2>
+        <p class="lead">${t.doneLead}</p>
+        <div class="summary"><div class="t">${esc(s.type.name)}</div><div>${esc(when)}</div><div>${t.with} ${esc(s.slot.user.name)}</div></div>
+        <div class="label">${t.goodToKnow}</div>
+        <ul class="list">
+          <li><span>01</span>${t.tip1}</li>
+          <li><span>02</span>${t.tip2}</li>
+          <li><span>03</span>${t.tip3} ${esc(this.email)}.</li>
+        </ul>
+        <button class="cta" data-a="finish">${t.finish} <span aria-hidden="true">→</span></button>`;
+    }
+
+    /* ---------------- events ---------------- */
+    onInput(e) {
+      const k = e.target.dataset && e.target.dataset.f;
+      if (!k) return;
+      this.s.form[k] = e.target.value;
+      if (this.s.errors[k]) { delete this.s.errors[k]; e.target.closest(".f").classList.remove("bad"); const m = e.target.closest(".f").querySelector(".e"); if (m) m.remove(); }
+    }
+    onClick(e) {
+      const b = e.target.closest("[data-a]");
+      if (!b || b.disabled) return;
+      const s = this.s, a = b.dataset.a;
+      if (a === "retry") { this.boot = this.load(); this.render(); return; }
+      if (a === "type") {
+        s.type = this.types[+b.dataset.i]; s.step = 1; s.day = null; s.slot = null; s.alert = null;
+        if (this.locations && this.locations.length === 1) s.location = this.locations[0].uuid;
+        if (this.locations && this.locations.length === 0) s.location = null;
+        this.users = null;
+        if (!(this.locations && this.locations.length > 1) || s.location) this.loadAvailability(); else this.render();
+        return;
+      }
+      if (a === "loc") { s.location = b.dataset.id; s.day = null; s.slot = null; this.loadAvailability(); return; }
+      if (a === "reavail") { this.loadAvailability(); return; }
+      if (a === "who") { s.who = b.dataset.id || null; s.day = null; s.slot = null; s.alert = null; this._keepScroll = true; this.loadAvailability(); return; }
+      if (a === "wk") { s.week += +b.dataset.d; s.day = null; s.slot = null; this._keepScroll = true; }
+      else if (a === "day") { s.day = b.dataset.id; s.slot = null; this._keepScroll = true; }
+      else if (a === "slot") { s.slot = this.avail.map[s.day][+b.dataset.i]; this._keepScroll = true; }
+      else if (a === "next") { s.step = 2; s.alert = null; }
+      else if (a === "g") { s.gender = b.dataset.v; delete s.errors.gender; this._keepScroll = true; }
+      else if (a === "submit") { this.submit(); return; }
+      else if (a === "finish") { this.close(); return; }
+      this.render();
+    }
+
+    validate() {
+      const f = this.s.form, e = {}, t = this.t;
+      const req = { first_names: t.requiredFirstName, surname: t.requiredSurname, date_of_birth: t.requiredBirthDate, email_address: t.requiredEmail, phone_number: t.requiredPhone };
+      Object.entries(req).forEach(([k, m]) => { if (!String(f[k] || "").trim()) e[k] = m; });
+      if (!e.email_address && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(f.email_address)) e.email_address = t.invalidEmail;
+      if (!e.date_of_birth) {
+        const d = new Date(f.date_of_birth); const now = new Date();
+        if (isNaN(d) || d > now || d.getFullYear() < now.getFullYear() - 120) e.date_of_birth = t.invalidBirthDate;
+      }
+      if (!this.s.gender) e.gender = t.requiredGender;
+      return e;
+    }
+
+    async submit() {
+      const s = this.s;
+      s.errors = this.validate(); s.alert = null;
+      if (Object.keys(s.errors).length) { this.render(); this.focusFirstError(); return; }
+      s.busy = true; this.render();
+      const f = s.form, clean = (v) => (v && String(v).trim()) || null;
+      const body = {
+        appointment_type: s.type.slug, user: s.slot.user.uuid, location: s.location || null,
+        date: s.day, timeslot: s.slot.t,
+        contact: {
+          first_names: clean(f.first_names), surname_prefix: clean(f.surname_prefix), surname: clean(f.surname),
+          gender: s.gender, date_of_birth: f.date_of_birth, email_address: clean(f.email_address),
+          phone_number: clean(f.phone_number), postal_code: clean(f.postal_code), house_number: clean(f.house_number),
+          country_id: f.country_id || this.countryId || 159, description: clean(f.description),
+        },
+      };
+      this.dispatchEvent(new CustomEvent("mula:submit", { bubbles: true, composed: true }));
+      try {
+        const r = await this.api.book(body);
+        s.busy = false; s.result = r;
+        this.dispatchEvent(new CustomEvent("mula:booked", { bubbles: true, composed: true, detail: { appointment: r.appointment } }));
+        if (r.redirect_url) { window.location.href = r.redirect_url; return; }
+        this.render();
+      } catch (err) {
+        s.busy = false;
+        if (err.status === 409) {
+          s.step = 1; s.slot = null; s.day = null;
+          s.alert = this.t.taken;
+          this.loadAvailability(); return;
+        }
+        if (err.status === 422 && err.data && err.data.errors) {
+          const map = {};
+          Object.entries(err.data.errors).forEach(([k, v]) => { map[k.replace(/^contact\./, "")] = this.language === "en" ? this.t.fieldError : [].concat(v)[0]; });
+          if (map.country_id && !map.postal_code) map.postal_code = map.country_id;
+          s.errors = map;
+          const known = ["first_names", "surname_prefix", "surname", "date_of_birth", "gender", "email_address", "phone_number", "postal_code", "house_number", "description"];
+          if (!Object.keys(map).some((k) => known.includes(k))) s.alert = this.t.requestError + " " + this.email + ".";
+          this.render(); this.focusFirstError(); return;
+        }
+        s.alert = this.t.submitError + " " + this.email + ".";
+        this.render();
+      }
+    }
+    focusFirstError() {
+      const el = this.root.querySelector(".f.bad input, .f.bad button, .alert");
+      if (el) { el.scrollIntoView({ block: "center" }); if (el.focus) el.focus(); }
+    }
+  }
+
+  customElements.define("mula-afspraak", MulaAfspraak);
+})();
